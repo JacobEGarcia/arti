@@ -1,0 +1,474 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>A.R.T.I. - Break Out King Kevin</title>
+<style>
+  html,body{margin:0;padding:0;overflow:hidden;background:#0a0e14;font-family:"Courier New",monospace;}
+  #c{display:block;width:100vw;height:100vh;}
+  .overlay{position:fixed;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;color:#eaf2ff;z-index:10;pointer-events:none;text-align:center;}
+  #title{background:radial-gradient(ellipse at center,#16324a 0%,#070b10 100%);}
+  #title h1{font-size:60px;letter-spacing:16px;margin:0;color:#7ac8ff;text-shadow:0 0 26px #1a6aa8;}
+  #title h2{font-size:19px;letter-spacing:5px;margin:12px 0 26px;color:#b8d8f0;font-weight:normal;}
+  #title p{font-size:14px;line-height:1.8;color:#9ab8d0;}
+  .blink{animation:bl 1.1s steps(2) infinite;font-size:17px;margin-top:28px;color:#cfe8ff;}
+  @keyframes bl{50%{opacity:0}}
+  #xhair{position:fixed;left:50%;top:50%;transform:translate(-50%,-50%);width:12px;height:12px;z-index:5;pointer-events:none;display:none;}
+  #xhair:before,#xhair:after{content:"";position:absolute;background:#eaf2ff;}
+  #xhair:before{left:5px;top:0;width:2px;height:12px;} #xhair:after{left:0;top:5px;width:12px;height:2px;}
+  .hudbox{position:fixed;z-index:5;color:#eaf2ff;background:rgba(8,16,26,.7);border:1px solid #3a6a9a;padding:6px 12px;font-size:13px;display:none;}
+  #inv{left:18px;bottom:16px;}
+  #lvl{right:18px;bottom:16px;}
+  #msg{position:fixed;top:24px;left:50%;transform:translateX(-50%);z-index:6;color:#cfe8ff;font-size:15px;background:rgba(8,16,26,.8);border:1px solid #3a6a9a;padding:6px 16px;display:none;}
+  #card{position:fixed;inset:0;background:rgba(5,10,16,.95);z-index:20;display:none;flex-direction:column;align-items:center;justify-content:center;color:#dceafa;padding:0 15%;text-align:center;}
+  #card h3{color:#7ac8ff;letter-spacing:4px;font-size:24px;margin-bottom:16px;}
+  #card p{font-size:15px;line-height:1.9;max-width:640px;}
+</style>
+</head>
+<body>
+<canvas id="c"></canvas>
+<div id="title" class="overlay">
+  <h1>A.R.T.I.</h1>
+  <h2>BREAK OUT KING KEVIN &bull; THE VOXEL GAME VALVE SHELVED</h2>
+  <p>Dig the world apart. Build it back wrong on purpose.<br>
+  King Kevin is in his own dungeon and will not stop talking about it.</p>
+  <p style="font-size:13px;color:#5a8ab0">WASD MOVE &bull; MOUSE LOOK &bull; SPACE JUMP &bull; SHIFT RUN<br>
+  LMB DIG &bull; RMB PLACE &bull; 1-4 PICK BLOCK &bull; TNT EXPLODES WHEN DUG - CAREFULLY</p>
+  <div class="blink">PRESS ENTER</div>
+</div>
+<div id="xhair"></div>
+<div class="hudbox" id="inv"></div>
+<div class="hudbox" id="lvl"></div>
+<div id="msg"></div>
+<div id="card"><h3 id="cardtitle"></h3><p id="cardtext"></p><p style="margin-top:24px;color:#cfe8ff" id="cardnext">PRESS ENTER</p></div>
+<script type="importmap">{"imports":{"three":"https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js"}}</script>
+<script type="module">
+import * as THREE from 'three';
+const params=new URLSearchParams(location.search);
+const SHOT=params.has('shot');
+const START_LV=Math.min(Math.max((parseInt(params.get('level')||'1')-1)|0,0),2);
+
+const canvas=document.getElementById('c');
+const renderer=new THREE.WebGLRenderer({canvas,antialias:true,preserveDrawingBuffer:SHOT});
+renderer.setPixelRatio(Math.min(devicePixelRatio,1.75));
+renderer.setSize(innerWidth,innerHeight);
+renderer.toneMapping=THREE.ACESFilmicToneRenderer?THREE.ACESFilmicToneMapping:THREE.ACESFilmicToneMapping;
+renderer.toneMappingExposure=1.1;
+const scene=new THREE.Scene();
+scene.background=new THREE.Color(0x8ec8e8);
+scene.fog=new THREE.FogExp2(0x9ad0e8,0.008);
+const camera=new THREE.PerspectiveCamera(74,innerWidth/innerHeight,.05,400);
+addEventListener('resize',()=>{camera.aspect=innerWidth/innerHeight;camera.updateProjectionMatrix();renderer.setSize(innerWidth,innerHeight);});
+scene.add(new THREE.HemisphereLight(0xeaf4ff,0x4a6a3a,0.85));
+const sun=new THREE.DirectionalLight(0xfff2d8,1.3);sun.position.set(30,50,15);scene.add(sun);
+
+// ---------- voxel world ----------
+const W=64,H=40,D=64;
+const AIR=0,GRASS=1,DIRT=2,STONE=3,WOOD=4,BRICK=5,TNT=6,GOLD=7;
+let grid=new Uint8Array(W*H*D);
+const gidx=(x,y,z)=>(y*D+z)*W+x;
+const inB=(x,y,z)=>x>=0&&y>=0&&z>=0&&x<W&&y<H&&z<D;
+const getB=(x,y,z)=>inB(x,y,z)?grid[gidx(x,y,z)]:STONE;
+const setB=(x,y,z,v)=>{if(inB(x,y,z))grid[gidx(x,y,z)]=v;};
+const COLORS={1:0x5aa04a,2:0x8a6a42,3:0x9a9a9a,4:0xa8763a,5:0xb0552f,6:0xd83a2a,7:0xffd24a};
+const cubeGeo=new THREE.BoxGeometry(1,1,1);
+const imesh=new THREE.InstancedMesh(cubeGeo,new THREE.MeshStandardMaterial({roughness:.9}),W*H*D/2);
+imesh.count=0;scene.add(imesh);
+let idToCoord=[];
+function rebuildMesh(){
+  let n=0;idToCoord=[];
+  const m4=new THREE.Matrix4(),col=new THREE.Color();
+  for(let y=0;y<H;y++)for(let z=0;z<D;z++)for(let x=0;x<W;x++){
+    const v=grid[gidx(x,y,z)];if(!v)continue;
+    // exposed?
+    if(getB(x+1,y,z)&&getB(x-1,y,z)&&getB(x,y+1,z)&&getB(x,y-1,z)&&getB(x,y,z+1)&&getB(x,y,z-1))continue;
+    m4.makeTranslation(x+.5,y+.5,z+.5);
+    imesh.setMatrixAt(n,m4);imesh.setColorAt(n,col.setHex(COLORS[v]));
+    idToCoord[n]=[x,y,z];n++;
+  }
+  imesh.count=n;imesh.instanceMatrix.needsUpdate=true;
+  if(imesh.instanceColor)imesh.instanceColor.needsUpdate=true;
+}
+
+// ---------- levels ----------
+let waterBlocks=[],exitPad=null,kevin=null,levelIdx=0,guards=[];
+const spawnPos=new THREE.Vector3();
+const player={pos:new THREE.Vector3(8,12,8),vel:new THREE.Vector3(),yaw:0,pitch:-.1,onGround:false,r:.34,h:1.7};
+const inv={2:0,3:0,4:0,5:0};
+let selBlock=2;
+const CARDS=[
+ ['THE GAOL','Wardens patrol the yard - dig pits under them or outrun them. King Kevin, inmate of his own gaol: "They said the walls were Kevin-proof. KEVIN-PROOF. Dig me out and I shall knight you with something heavy."'],
+ ['THE MOAT KEEP','Kevin again: "A moat. THEY GAVE ME A MOAT. And powder kegs, which feels like a design flaw. Build me a bridge or blow me a door. King\'s prerogative."'],
+ ['THE PANOPTICON','Final indignity - Kevin at the top of his own tower: "I can see my kingdom from here and I CANNOT REACH IT. Build, subject. Build UP."'],
+];
+function clearWorldExtras(){
+  for(const w of waterBlocks)scene.remove(w.mesh);
+  waterBlocks=[];
+  if(exitPad)scene.remove(exitPad);
+  if(kevin)scene.remove(kevin.mesh);
+  kevin=null;
+  for(const g of guards)scene.remove(g.mesh);
+  guards=[];
+}
+function genGround(hill){
+  for(let z=0;z<D;z++)for(let x=0;x<W;x++){
+    const h=Math.floor(6+2*Math.sin(x*.3)*Math.cos(z*.25)+(hill?1.5*Math.sin(x*.13+z*.17):0));
+    for(let y=0;y<=h;y++){
+      grid[gidx(x,y,z)]=y===h?GRASS:(y>h-3?DIRT:STONE);
+    }
+  }
+}
+function groundTop(x,z){for(let y=H-1;y>=0;y--)if(grid[gidx(x,y,z)])return y+1;return 0;}
+function boxFill(x0,y0,z0,x1,y1,z1,v){for(let y=y0;y<=y1;y++)for(let z=z0;z<=z1;z++)for(let x=x0;x<=x1;x++)setB(x,y,z,v);}
+function prisonWall(cx,cz,r,y0,y1){
+  for(let z=cz-r;z<=cz+r;z++)for(let x=cx-r;x<=cx+r;x++){
+    const edge=Math.max(Math.abs(x-cx),Math.abs(z-cz))===r;
+    if(edge)boxFill(x,y0,z,x,y1,z,BRICK);
+  }
+}
+function makeExit(x,z){
+  const y=groundTop(x,z);
+  const m=new THREE.Mesh(new THREE.CylinderGeometry(1.6,1.6,.18,24),new THREE.MeshStandardMaterial({color:0x7ac8ff,emissive:0x2a7ac8,emissiveIntensity:.9}));
+  m.position.set(x+.5,y+.1,z+.5);scene.add(m);exitPad=m;
+}
+function makeKevin(x,y,z){
+  const g=new THREE.Group();
+  const body=new THREE.Mesh(new THREE.CapsuleGeometry(.34,.8,3,10),new THREE.MeshStandardMaterial({color:0xd84a6a,roughness:.7}));
+  body.position.y=.95;body.castShadow=true;g.add(body);
+  const head=new THREE.Mesh(new THREE.SphereGeometry(.26,12,12),new THREE.MeshStandardMaterial({color:0xe8c09a}));
+  head.position.y=1.75;g.add(head);
+  const crown=new THREE.Mesh(new THREE.CylinderGeometry(.2,.24,.2,8),new THREE.MeshStandardMaterial({color:0xffd24a,metalness:.8,roughness:.3}));
+  crown.position.y=2.0;g.add(crown);
+  g.position.set(x,y,z);scene.add(g);
+  kevin={mesh:g,pos:new THREE.Vector3(x,y,z),vel:new THREE.Vector3(),freed:false,onGround:false};
+}
+function torch(x,y,z){
+  setB(x,y,z,WOOD);setB(x,y+1,z,GOLD);
+}
+function level1(){ // THE GAOL
+  genGround(false);
+  const cx=32,cz=32,y0=groundTop(cx,cz);
+  prisonWall(cx,cz,5,y0,y0+5);
+  // roof
+  boxFill(cx-5,y0+6,cz-5,cx+5,y0+6,cz+5,BRICK);
+  torch(cx-4,y0,cz-4);torch(cx+4,y0,cz+4);
+  makeKevin(cx+.5,groundTop(cx,cz),cz+.5);
+  makeExit(10,10);
+  player.pos.set(8.5,groundTop(8,8)+1.7,8.5);
+}
+function level2(){ // MOAT KEEP
+  genGround(false);
+  const cx=32,cz=32;
+  // moat: ring of water (air cells flagged visually)
+  const yw=groundTop(cx,cz);
+  for(let z=cz-9;z<=cz+9;z++)for(let x=cx-9;x<=cx+9;x++){
+    const d=Math.max(Math.abs(x-cx),Math.abs(z-cz));
+    if(d>=7&&d<=8){
+      for(let y=0;y<=yw;y++)setB(x,y,z,AIR);
+      const wm=new THREE.Mesh(new THREE.BoxGeometry(1,.5,1),new THREE.MeshStandardMaterial({color:0x2a7ac8,transparent:true,opacity:.7,roughness:.2}));
+      wm.position.set(x+.5,yw-.6,z+.5);scene.add(wm);
+      waterBlocks.push({mesh:wm,x,y:yw-1,z});
+    }
+  }
+  prisonWall(cx,cz,5,yw,yw+6);
+  boxFill(cx-5,yw+7,cz-5,cx+5,yw+7,cz+5,BRICK);
+  // powder kegs near spawn
+  const kx=10,kz=30,ky=groundTop(kx,kz);
+  boxFill(kx,ky,kz,kx+2,ky,kz+2,TNT);
+  makeKevin(cx+.5,groundTop(cx,cz),cz+.5);
+  makeExit(8,24);
+  player.pos.set(8.5,groundTop(8,20)+1.7,20.5);
+}
+function level3(){ // PANOPTICON
+  genGround(false);
+  const cx=32,cz=32,y0=groundTop(cx,cz);
+  // tall tower 7x7
+  for(let y=y0;y<y0+28;y++){
+    for(let z=cz-3;z<=cz+3;z++)for(let x=cx-3;x<=cx+3;x++){
+      const edge=Math.max(Math.abs(x-cx),Math.abs(z-cz))===3;
+      setB(x,y,z,edge?BRICK:AIR);
+    }
+  }
+  // top cell floor + roof
+  boxFill(cx-3,y0+22,cz-3,cx+3,y0+22,cz+3,BRICK);
+  boxFill(cx-3,y0+28,cz-3,cx+3,y0+28,cz+3,BRICK);
+  torch(cx-2,y0+23,cz-2);torch(cx+2,y0+23,cz+2);
+  makeKevin(cx+.5,y0+23,cz+.5);
+  makeExit(12,12);
+  player.pos.set(10.5,groundTop(10,10)+1.7,10.5);
+}
+const LEVELS=[level1,level2,level3];
+function loadLevel(i){
+  grid=new Uint8Array(W*H*D);
+  clearWorldExtras();
+  LEVELS[i]();
+  levelIdx=i;
+  spawnPos.copy(player.pos);
+  spawnGuards(i);
+  rebuildMesh();
+  player.vel.set(0,0,0);player.yaw=Math.PI*.75;
+  inv[2]=0;inv[3]=0;inv[4]=0;inv[5]=0;selBlock=2;
+  updHUD();
+  showCard(CARDS[i][0],CARDS[i][1]);
+}
+
+// ---------- player physics vs voxels ----------
+const keys={};let playing=false,started=false;
+addEventListener('keydown',e=>{keys[e.code]=true;
+  if(e.code==='Enter')enterPressed();
+  if(e.code==='Digit1'){selBlock=2;updHUD();} if(e.code==='Digit2'){selBlock=3;updHUD();}
+  if(e.code==='Digit3'){selBlock=4;updHUD();} if(e.code==='Digit4'){selBlock=5;updHUD();}
+});
+addEventListener('keyup',e=>keys[e.code]=false);
+addEventListener('mousemove',e=>{if(document.pointerLockElement!==canvas)return;player.yaw-=e.movementX*.0022;player.pitch=THREE.MathUtils.clamp(player.pitch-e.movementY*.0022,-1.5,1.5);});
+canvas.addEventListener('mousedown',e=>{if(!playing)return;if(document.pointerLockElement!==canvas){canvas.requestPointerLock();return;}if(e.button===0)dig();if(e.button===2)place();});
+canvas.addEventListener('contextmenu',e=>e.preventDefault());
+
+function solidAt(x,y,z){const v=getB(x,y,z);return v!==AIR&&v!==GOLD;}
+function collideAxis(p,ax,d){
+  const r=player.r,h=player.h;
+  const minx=Math.floor(p.pos.x-r),maxx=Math.floor(p.pos.x+r);
+  const miny=Math.floor(p.pos.y-h),maxy=Math.floor(p.pos.y-0.01);
+  const minz=Math.floor(p.pos.z-r),maxz=Math.floor(p.pos.z+r);
+  for(let y=miny;y<=maxy;y++)for(let z=minz;z<=maxz;z++)for(let x=minx;x<=maxx;x++){
+    if(!solidAt(x,y,z))continue;
+    const pb={minx:p.pos.x-r,maxx:p.pos.x+r,miny:p.pos.y-h,maxy:p.pos.y,minz:p.pos.z-r,maxz:p.pos.z+r};
+    if(pb.minx<x+1&&pb.maxx>x&&pb.miny<y+1&&pb.maxy>y&&pb.minz<z+1&&pb.maxz>z){
+      if(ax==='y'){if(d<0){p.pos.y=y+1+h;p.vel.y=0;p.onGround=true;}else{p.pos.y=y-0.001;p.vel.y=0;}}
+      else if(ax==='x'){p.pos.x=d>0?x-r-0.001:x+1+r+0.001;p.vel.x=0;}
+      else{p.pos.z=d>0?z-r-0.001:z+1+r+0.001;p.vel.z=0;}
+    }
+  }
+}
+function movePlayer(dt){
+  const p=player;
+  if(keys.Space&&p.onGround){p.vel.y=8.4;p.onGround=false;}
+  p.vel.y-=23*dt;p.vel.y=Math.max(p.vel.y,-42);
+  const f=(keys.KeyW?1:0)-(keys.KeyS?1:0),s=(keys.KeyD?1:0)-(keys.KeyA?1:0);
+  const sp=(keys.ShiftLeft||keys.ShiftRight)?7.4:4.6;
+  const sin=Math.sin(p.yaw),cos=Math.cos(p.yaw);
+  let dx=(-sin*f+cos*s),dz=(-cos*f-sin*s);
+  const l=Math.hypot(dx,dz)||1;dx/=l;dz/=l;if(!f&&!s){dx=0;dz=0;}
+  p.vel.x=dx*sp;p.vel.z=dz*sp;
+  p.onGround=false;
+  for(const ax of['y','x','z']){
+    const d=p.vel[ax]*dt;if(!d)continue;
+    p.pos[ax]+=d;collideAxis(p,ax,d);
+  }
+  if(p.pos.y<-10){p.pos.set(8.5,14,8.5);p.vel.set(0,0,0);}
+  // water
+  for(const w of waterBlocks){
+    if(Math.abs(p.pos.x-(w.x+.5))<.8&&Math.abs(p.pos.z-(w.z+.5))<.8&&p.pos.y-p.h<w.y+1&&p.pos.y-p.h>w.y-2){
+      say('The moat is not a suggestion.');p.pos.set(8.5,14,8.5);p.vel.set(0,0,0);break;
+    }
+  }
+}
+
+// ---------- dig / place ----------
+const ray=new THREE.Raycaster();
+function dig(){
+  ray.setFromCamera({x:0,y:0},camera);ray.far=7;
+  const hits=ray.intersectObject(imesh);
+  if(!hits.length)return;
+  const id=hits[0].instanceId;if(id===undefined)return;
+  const[x,y,z]=idToCoord[id];
+  const v=getB(x,y,z);if(!v)return;
+  setB(x,y,z,AIR);
+  if(v===TNT){explode(x,y,z);rebuildMesh();return;}
+  if(inv[v]!==undefined)inv[v]++;
+  // unsupported sand? (skip physics v1)
+  rebuildMesh();updHUD();
+}
+function explode(cx,cy,cz){
+  for(let y=cy-2;y<=cy+2;y++)for(let z=cz-2;z<=cz+2;z++)for(let x=cx-2;x<=cx+2;x++){
+    if(Math.hypot(x-cx,y-cy,z-cz)<=2.4)setB(x,y,z,AIR);
+  }
+  say('KABOOM. Kevin applauds the enthusiasm.');
+}
+function place(){
+  ray.setFromCamera({x:0,y:0},camera);ray.far=7;
+  const hits=ray.intersectObject(imesh);
+  if(!hits.length)return;
+  if(inv[selBlock]<=0){say('No blocks of that type - dig some first.');return;}
+  const h=hits[0];
+  const n=h.face.normal;
+  const[bx,by,bz]=idToCoord[h.instanceId];
+  const tx=bx+Math.round(n.x),ty=by+Math.round(n.y),tz=bz+Math.round(n.z);
+  if(!inB(tx,ty,tz)||getB(tx,ty,tz))return;
+  // don't place inside player or kevin
+  const p=player;
+  if(p.pos.x-p.r<tx+1&&p.pos.x+p.r>tx&&p.pos.y-p.h<ty+1&&p.pos.y>ty&&p.pos.z-p.r<tz+1&&p.pos.z+p.r>tz)return;
+  if(selBlock===TNT&&inv[6]===undefined){}
+  inv[selBlock]--;
+  setB(tx,ty,tz,selBlock);
+  rebuildMesh();updHUD();
+}
+
+// ---------- wardens (guard AI) ----------
+function makeGuard(x,z){
+  const g=new THREE.Group();
+  const coat=new THREE.Mesh(new THREE.CapsuleGeometry(.34,.9,3,10),new THREE.MeshStandardMaterial({color:0x2a3a6a,roughness:.8}));coat.position.y=0;g.add(coat);
+  const head=new THREE.Mesh(new THREE.SphereGeometry(.24,10,10),new THREE.MeshStandardMaterial({color:0xe8c09a}));head.position.y=.85;g.add(head);
+  const helm=new THREE.Mesh(new THREE.CylinderGeometry(.26,.28,.22,10),new THREE.MeshStandardMaterial({color:0x1a1a22,metalness:.6,roughness:.4}));helm.position.y=1.06;g.add(helm);
+  const lamp=new THREE.Mesh(new THREE.SphereGeometry(.12,8,8),new THREE.MeshStandardMaterial({color:0xffb347,emissive:0xff8a2a,emissiveIntensity:1.2}));lamp.position.set(.45,-.1,.2);g.add(lamp);
+  const y=groundTop(Math.floor(x),Math.floor(z));
+  g.position.set(x+.5,y+1.35,z+.5);scene.add(g);
+  return {mesh:g,pos:new THREE.Vector3(x+.5,y+1.35,z+.5),vel:new THREE.Vector3(),onGround:false,state:'patrol',cool:0,alerted:false};
+}
+const GUARD_RINGS=[[10,2],[13,3],[9,4]]; // patrol radius, guard count per level
+function spawnGuards(i){
+  const [R,count]=GUARD_RINGS[i];
+  const wps=[[32-R,32-R],[32+R,32-R],[32+R,32+R],[32-R,32+R]];
+  for(let n=0;n<count;n++){
+    const g=makeGuard(...wps[n%4]);
+    g.wps=wps;g.wpi=(n+1)%4;
+    guards.push(g);
+  }
+}
+function guardPhysics(g,dt){
+  g.vel.y-=23*dt;
+  for(const ax of['y','x','z']){
+    const dd=g.vel[ax]*dt;if(!dd)continue;
+    g.pos[ax]+=dd;
+    const r=.34,h=1.6;
+    const minx=Math.floor(g.pos.x-r),maxx=Math.floor(g.pos.x+r);
+    const miny=Math.floor(g.pos.y-h),maxy=Math.floor(g.pos.y-0.01);
+    const minz=Math.floor(g.pos.z-r),maxz=Math.floor(g.pos.z+r);
+    for(let y=miny;y<=maxy;y++)for(let z=minz;z<=maxz;z++)for(let x=minx;x<=maxx;x++){
+      if(!solidAt(x,y,z))continue;
+      const bb={minx:g.pos.x-r,maxx:g.pos.x+r,miny:g.pos.y-h,maxy:g.pos.y,minz:g.pos.z-r,maxz:g.pos.z+r};
+      if(bb.minx<x+1&&bb.maxx>x&&bb.miny<y+1&&bb.maxy>y&&bb.minz<z+1&&bb.maxz>z){
+        if(ax==='y'){if(dd<0){g.pos.y=y+1+h;g.vel.y=0;g.onGround=true;}else{g.pos.y=y-0.001;g.vel.y=0;}}
+        else if(ax==='x'){g.pos.x=dd>0?x-r-0.001:x+1+r+0.001;if(g.onGround&&dd)g.vel.y=5.2;}
+        else{g.pos.z=dd>0?z-r-0.001:z+1+r+0.001;if(g.onGround&&dd)g.vel.y=5.2;}
+      }
+    }
+  }
+  if(g.pos.y<-8){g.pos.set(32.5,groundTop(32,38)+1.35,38.5);g.vel.set(0,0,0);}
+}
+function updGuards(dt){
+  for(const g of guards){
+    g.cool=Math.max(0,g.cool-dt);
+    const dx=player.pos.x-g.pos.x,dz=player.pos.z-g.pos.z;
+    const hd=Math.hypot(dx,dz);
+    // state transitions
+    if(g.state==='patrol'&&hd<13&&Math.abs(player.pos.y-g.pos.y)<5){
+      g.state='chase';
+      if(!g.alerted){g.alerted=true;say('A warden spots you: "OI. The King stays IN."');}
+    }else if(g.state==='chase'&&hd>22){
+      g.state='patrol';g.alerted=false;
+      say('The warden loses you. "These tunnels. THESE TUNNELS."');
+    }
+    // movement target
+    let tx,tz,sp;
+    if(g.state==='chase'){tx=player.pos.x;tz=player.pos.z;sp=4.5;}
+    else{
+      const wp=g.wps[g.wpi];
+      tx=wp[0]+.5;tz=wp[1]+.5;sp=2.4;
+      if(Math.hypot(tx-g.pos.x,tz-g.pos.z)<1.2)g.wpi=(g.wpi+1)%g.wps.length;
+    }
+    const mx=tx-g.pos.x,mz=tz-g.pos.z,ml=Math.hypot(mx,mz)||1;
+    g.vel.x=mx/ml*sp;g.vel.z=mz/ml*sp;
+    g.onGround=false;
+    guardPhysics(g,dt);
+    g.mesh.position.copy(g.pos);
+    g.mesh.rotation.y=Math.atan2(mx,mz);
+    // catch
+    if(hd<1.3&&g.cool<=0&&Math.abs(player.pos.y-g.pos.y)<2.5){
+      g.cool=4;g.state='patrol';g.alerted=false;
+      player.pos.copy(spawnPos);player.vel.set(0,0,0);
+      say('Collared. The warden drags you back to the gate. Kevin: "Do dig QUIETER."',3600);
+    }
+  }
+}
+
+// ---------- kevin ----------
+function updKevin(dt){
+  if(!kevin)return;
+  const k=kevin;
+  // freed when player is near and no wall between (simple: player within 2.5)
+  const d=k.pos.distanceTo(player.pos);
+  if(!k.freed&&d<2.5){k.freed=true;say('Kevin: "FREEDOM. Right. To the exit, and walk faster."');}
+  if(k.freed&&d>2){
+    const dir=new THREE.Vector3().subVectors(player.pos,k.pos);dir.y=0;dir.normalize();
+    k.vel.x=dir.x*3.2;k.vel.z=dir.z*3.2;
+  }else{k.vel.x=0;k.vel.z=0;}
+  k.vel.y-=23*dt;
+  // step assist
+  for(const ax of['y','x','z']){
+    const dd=k.vel[ax]*dt;if(!dd)continue;
+    k.pos[ax]+=dd;
+    const r=.34,h=1.6;
+    const minx=Math.floor(k.pos.x-r),maxx=Math.floor(k.pos.x+r);
+    const miny=Math.floor(k.pos.y-h),maxy=Math.floor(k.pos.y-0.01);
+    const minz=Math.floor(k.pos.z-r),maxz=Math.floor(k.pos.z+r);
+    for(let y=miny;y<=maxy;y++)for(let z=minz;z<=maxz;z++)for(let x=minx;x<=maxx;x++){
+      if(!solidAt(x,y,z))continue;
+      const bb={minx:k.pos.x-r,maxx:k.pos.x+r,miny:k.pos.y-h,maxy:k.pos.y,minz:k.pos.z-r,maxz:k.pos.z+r};
+      if(bb.minx<x+1&&bb.maxx>x&&bb.miny<y+1&&bb.maxy>y&&bb.minz<z+1&&bb.maxz>z){
+        if(ax==='y'){if(dd<0){k.pos.y=y+1+h;k.vel.y=0;k.onGround=true;}else{k.pos.y=y-0.001;k.vel.y=0;}}
+        else if(ax==='x'){k.pos.x=dd>0?x-r-0.001:x+1+r+0.001;if(k.onGround&&dd)k.vel.y=5.2;}
+        else{k.pos.z=dd>0?z-r-0.001:z+1+r+0.001;if(k.onGround&&dd)k.vel.y=5.2;}
+      }
+    }
+  }
+  k.mesh.position.copy(k.pos);
+  if(k.pos.y<-10){k.pos.copy(player.pos);}
+}
+
+// ---------- flow / hud ----------
+const cardEl=document.getElementById('card');let cardOpen=false;
+function showCard(t,x){document.getElementById('cardtitle').textContent=t;document.getElementById('cardtext').textContent=x;cardEl.style.display='flex';cardOpen=true;if(document.exitPointerLock)document.exitPointerLock();}
+function hideCard(){cardEl.style.display='none';cardOpen=false;}
+function say(t,ms){const m=document.getElementById('msg');m.textContent=t;m.style.display='block';clearTimeout(say._t);say._t=setTimeout(()=>m.style.display='none',ms||2800);}
+function updHUD(){
+  document.getElementById('inv').textContent='BLOCKS  [1]dirt '+inv[2]+'  [2]stone '+inv[3]+'  [3]wood '+inv[4]+'  [4]brick '+inv[5]+'   SELECTED: '+({2:'DIRT',3:'STONE',4:'WOOD',5:'BRICK'})[selBlock];
+  document.getElementById('lvl').textContent='LEVEL '+(levelIdx+1)+' / 3';
+}
+function enterPressed(){
+  if(cardOpen){hideCard();if(!SHOT)canvas.requestPointerLock();return;}
+  if(!started)startGame();
+}
+function startGame(){
+  started=true;playing=true;
+  document.getElementById('title').style.display='none';
+  document.getElementById('xhair').style.display='block';
+  for(const id of['inv','lvl'])document.getElementById(id).style.display='block';
+  loadLevel(START_LV);
+  if(!SHOT)canvas.requestPointerLock();
+}
+function checkWin(){
+  if(!kevin||!kevin.freed||!exitPad)return;
+  const d2=(a,b)=>Math.hypot(a.x-b.x,a.z-b.z);
+  if(d2(player.pos,exitPad.position)<1.8&&kevin.pos.distanceTo(player.pos)<4){
+    if(levelIdx+1<LEVELS.length){loadLevel(levelIdx+1);}
+    else{
+      playing=false;
+      showCard('THE KINGDOM IS KEVIN\'S AGAIN','Three prisons, one monarch, zero intended solutions. A.R.T.I. never left Valve - voxel by voxel, tonight it did. Kevin\'s review: "Acceptable. The bridges were ugly. Five stars."');
+      document.getElementById('cardnext').textContent='REFRESH TO DIG AGAIN';
+    }
+  }
+}
+
+// ---------- main loop ----------
+const clock=new THREE.Clock();
+function tick(){
+  requestAnimationFrame(tick);
+  const dt=Math.min(clock.getDelta(),.05);
+  if(playing&&!cardOpen){
+    movePlayer(dt);
+    updKevin(dt);
+    updGuards(dt);
+    checkWin();
+    if(exitPad)exitPad.rotation.y+=dt;
+  }
+  camera.position.copy(player.pos);
+  camera.rotation.set(0,0,0);camera.rotateY(player.yaw);camera.rotateX(player.pitch);
+  renderer.render(scene,camera);
+}
+tick();
+if(SHOT){startGame();hideCard();}
+</script>
+</body>
+</html>
